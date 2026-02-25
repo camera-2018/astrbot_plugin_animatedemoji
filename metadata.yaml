@@ -1,0 +1,6 @@
+name: astrbot_plugin_animatedemoji
+display_name: Animated Emoji
+desc: 将静态 emoji 转换为动态 emoji，支持 Google Noto 和 Telegram 两种动态方案。
+version: v1.0.0
+author: camera-2018
+repo: https://github.com/camera-2018/astrbot_plugin_animatedemoji
