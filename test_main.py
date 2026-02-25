@@ -38,6 +38,7 @@ _star_module.register = lambda *a, **kw: lambda cls: cls
 
 _filter_mock = MagicMock()
 _filter_mock.command = lambda *a, **kw: lambda fn: fn
+_filter_mock.llm_tool = lambda *a, **kw: lambda fn: fn
 
 _event_module = MagicMock()
 _event_module.filter = _filter_mock
@@ -402,3 +403,105 @@ class TestSessionLifecycle:
         plugin.session.closed = True
         await plugin.terminate()
         plugin.session.close.assert_not_called()
+
+
+# ============================================================
+# Tests: _get_animated_emoji shared helper
+# ============================================================
+
+class TestGetAnimatedEmoji:
+    @pytest.mark.asyncio
+    async def test_noto_success(self, plugin):
+        plugin._download_image = AsyncMock(return_value="/tmp/emoji.gif")
+        local_path, err = await plugin._get_animated_emoji("😀", "noto")
+        assert local_path == "/tmp/emoji.gif"
+        assert err is None
+
+    @pytest.mark.asyncio
+    async def test_noto_download_fail(self, plugin):
+        plugin._download_image = AsyncMock(return_value=None)
+        local_path, err = await plugin._get_animated_emoji("😀", "noto")
+        assert local_path is None
+        assert "Noto" in err
+
+    @pytest.mark.asyncio
+    async def test_tg_success(self, plugin):
+        plugin._get_telegram_url = AsyncMock(
+            return_value="https://example.com/emoji.webp"
+        )
+        plugin._download_image = AsyncMock(return_value="/tmp/emoji.webp")
+        local_path, err = await plugin._get_animated_emoji("😀", "tg")
+        assert local_path == "/tmp/emoji.webp"
+        assert err is None
+
+    @pytest.mark.asyncio
+    async def test_tg_not_found(self, plugin):
+        plugin._get_telegram_url = AsyncMock(return_value=None)
+        local_path, err = await plugin._get_animated_emoji("😀", "tg")
+        assert local_path is None
+        assert "Telegram" in err
+
+    @pytest.mark.asyncio
+    async def test_tg_download_fail(self, plugin):
+        plugin._get_telegram_url = AsyncMock(
+            return_value="https://example.com/emoji.webp"
+        )
+        plugin._download_image = AsyncMock(return_value=None)
+        local_path, err = await plugin._get_animated_emoji("😀", "tg")
+        assert local_path is None
+        assert "下载失败" in err
+
+    @pytest.mark.asyncio
+    async def test_unknown_source(self, plugin):
+        local_path, err = await plugin._get_animated_emoji("😀", "invalid")
+        assert local_path is None
+        assert "未知来源" in err
+
+
+# ============================================================
+# Tests: LLM tool
+# ============================================================
+
+class TestLlmTool:
+    @pytest.mark.asyncio
+    async def test_llm_tool_success(self, plugin):
+        plugin._get_animated_emoji = AsyncMock(
+            return_value=("/tmp/emoji.gif", None)
+        )
+        mock_event = MagicMock()
+        mock_event.plain_result = lambda t: t
+        mock_event.chain_result = lambda c: c
+
+        results = []
+        async for r in plugin.animated_emoji_tool(mock_event, "😀", "noto"):
+            results.append(r)
+
+        assert len(results) == 1
+        plugin._get_animated_emoji.assert_called_once_with("😀", "noto")
+
+    @pytest.mark.asyncio
+    async def test_llm_tool_invalid_emoji(self, plugin):
+        mock_event = MagicMock()
+        mock_event.plain_result = lambda t: t
+
+        results = []
+        async for r in plugin.animated_emoji_tool(mock_event, "abc", "noto"):
+            results.append(r)
+
+        assert len(results) == 1
+        assert "未检测到有效的 emoji" in results[0]
+
+    @pytest.mark.asyncio
+    async def test_llm_tool_error(self, plugin):
+        plugin._get_animated_emoji = AsyncMock(
+            return_value=(None, "download error")
+        )
+        mock_event = MagicMock()
+        mock_event.plain_result = lambda t: t
+
+        results = []
+        async for r in plugin.animated_emoji_tool(mock_event, "😀", "noto"):
+            results.append(r)
+
+        assert len(results) == 1
+        assert "download error" in results[0]

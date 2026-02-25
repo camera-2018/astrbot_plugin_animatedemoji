@@ -247,18 +247,45 @@ class AnimatedEmojiPlugin(Star):
 
         return None
 
-    @filter.command("animoji")
+    async def _get_animated_emoji(
+        self, emoji_char: str, source: str = "noto"
+    ) -> tuple[str | None, str | None]:
+        """Shared logic: resolve and download an animated emoji.
+
+        Returns (local_path, error_message).
+        """
+        if source == "noto":
+            url = _get_noto_url(emoji_char)
+            logger.info(f"Noto animated emoji URL: {url}")
+            local_path = await self._download_image(url)
+            if not local_path:
+                return None, f"未找到该 emoji 的 Noto 动态版本或下载失败: {emoji_char}"
+            return local_path, None
+
+        elif source == "tg":
+            url = await self._get_telegram_url(emoji_char)
+            if not url:
+                return None, f"未找到该 emoji 的 Telegram 动态版本: {emoji_char}"
+            logger.info(f"Telegram animated emoji URL: {url}")
+            local_path = await self._download_image(url)
+            if not local_path:
+                return None, f"Telegram 动态 emoji 下载失败: {emoji_char}"
+            return local_path, None
+
+        return None, f"未知来源: {source}"
+
+    @filter.command("amj", alias={"animoji"})
     async def animoji(self, event: AstrMessageEvent):
-        """将 emoji 转换为动态版本。用法: /animoji [noto|tg] <emoji>"""
+        """将 emoji 转换为动态版本。用法: /amj [noto|tg] <emoji>"""
         text = event.message_str.strip()
 
         if not text:
             yield event.plain_result(
-                "用法: /animoji [noto|tg] <emoji>\n"
+                "用法: /amj [noto|tg] <emoji>\n"
                 "示例:\n"
-                "  /animoji 😀        (默认使用 noto)\n"
-                "  /animoji noto 😀   (Google Noto 动态)\n"
-                "  /animoji tg 😀     (Telegram 动态)"
+                "  /amj 😀        (默认使用 noto)\n"
+                "  /amj noto 😀   (Google Noto 动态)\n"
+                "  /amj tg 😀     (Telegram 动态)"
             )
             return
 
@@ -273,45 +300,44 @@ class AnimatedEmojiPlugin(Star):
             yield event.plain_result("未检测到有效的 emoji，请输入一个 emoji 表情。")
             return
 
-        if source == "noto":
-            url = _get_noto_url(emoji_char)
-            logger.info(f"Noto animated emoji URL: {url}")
+        local_path, err = await self._get_animated_emoji(emoji_char, source)
+        if err:
+            yield event.plain_result(err)
+            return
 
-            local_path = await self._download_image(url)
-            if not local_path:
-                yield event.plain_result(
-                    f"未找到该 emoji 的 Noto 动态版本或下载失败: {emoji_char}"
-                )
-                return
+        source_label = "Noto" if source == "noto" else "Telegram"
+        chain = [
+            Comp.Plain(f"{emoji_char} 的 {source_label} 动态版本：\n"),
+            Comp.Image.fromFileSystem(local_path),
+        ]
+        yield event.chain_result(chain)
 
-            chain = [
-                Comp.Plain(f"{emoji_char} 的 Noto 动态版本：\n"),
-                Comp.Image.fromFileSystem(local_path),
-            ]
-            yield event.chain_result(chain)
+    @filter.llm_tool("animated_emoji")
+    async def animated_emoji_tool(
+        self, event: AstrMessageEvent, emoji: str, source: str = "noto"
+    ):
+        """Get the animated version of an emoji. Call this when the user wants to see an animated/dynamic emoji.
 
-        elif source == "tg":
-            url = await self._get_telegram_url(emoji_char)
-            if not url:
-                yield event.plain_result(
-                    f"未找到该 emoji 的 Telegram 动态版本: {emoji_char}"
-                )
-                return
+        Args:
+            emoji(str): The emoji character to animate, e.g. 😀, 🎉, ❤️
+            source(str): The source for animated emoji. Use "noto" for Google Noto style (default), or "tg" for Telegram style.
+        """
+        emoji_char = _extract_emoji(emoji)
+        if not emoji_char:
+            yield event.plain_result("未检测到有效的 emoji，请输入一个 emoji 表情。")
+            return
 
-            logger.info(f"Telegram animated emoji URL: {url}")
+        local_path, err = await self._get_animated_emoji(emoji_char, source)
+        if err:
+            yield event.plain_result(err)
+            return
 
-            local_path = await self._download_image(url)
-            if not local_path:
-                yield event.plain_result(
-                    f"Telegram 动态 emoji 下载失败: {emoji_char}"
-                )
-                return
-
-            chain = [
-                Comp.Plain(f"{emoji_char} 的 Telegram 动态版本：\n"),
-                Comp.Image.fromFileSystem(local_path),
-            ]
-            yield event.chain_result(chain)
+        source_label = "Noto" if source == "noto" else "Telegram"
+        chain = [
+            Comp.Plain(f"{emoji_char} 的 {source_label} 动态版本：\n"),
+            Comp.Image.fromFileSystem(local_path),
+        ]
+        yield event.chain_result(chain)
 
     async def terminate(self):
         """Clean up when plugin is unloaded."""
