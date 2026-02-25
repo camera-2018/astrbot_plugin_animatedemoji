@@ -13,6 +13,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+import PIL
+import PIL.Image
+
 # ============================================================
 # Mock astrbot & aiohttp setup (same pattern as emojikitchen)
 # ============================================================
@@ -52,6 +55,8 @@ _MOCKS = {
     "astrbot.api.event.filter": _filter_mock,
     "astrbot.api.star": _star_module,
     "astrbot.api.message_components": MagicMock(),
+    "PIL": PIL,
+    "PIL.Image": PIL.Image,
 }
 
 with patch.dict("sys.modules", _MOCKS):
@@ -63,6 +68,7 @@ with patch.dict("sys.modules", _MOCKS):
         _get_noto_url,
         _url_to_cache_filename,
         _build_mirror_urls,
+        _convert_webp_to_gif,
         NOTO_BASE_URL,
         TELEGRAM_BASE_URL,
         GITHUB_MIRROR_PREFIXES,
@@ -505,3 +511,153 @@ class TestLlmTool:
 
         assert len(results) == 1
         assert "download error" in results[0]
+
+
+# ============================================================
+# Tests: WebP to GIF conversion
+# ============================================================
+
+class TestConvertWebpToGif:
+    def test_converts_webp_to_gif(self, tmp_path):
+        from PIL import Image
+        # Create a test animated WebP with visually different frames
+        frames = []
+        for i in range(3):
+            img = Image.new("RGBA", (64, 64), (255, i * 80, 0, 200))
+            frames.append(img)
+        webp_path = str(tmp_path / "emoji.webp")
+        frames[0].save(webp_path, save_all=True, append_images=frames[1:],
+                       duration=50, loop=0)
+
+        gif_path = _convert_webp_to_gif(webp_path)
+        assert gif_path.endswith(".gif")
+        assert os.path.exists(gif_path)
+        gif = Image.open(gif_path)
+        assert gif.format == "GIF"
+
+    def test_returns_cached_gif(self, tmp_path):
+        webp_path = str(tmp_path / "emoji.webp")
+        gif_path = str(tmp_path / "emoji.gif")
+        Path(webp_path).write_bytes(b"dummy")
+        Path(gif_path).write_bytes(b"cached_gif")
+
+        result = _convert_webp_to_gif(webp_path)
+        assert result == gif_path
+
+    def test_returns_webp_on_failure(self, tmp_path):
+        webp_path = str(tmp_path / "bad.webp")
+        Path(webp_path).write_bytes(b"not a real webp")
+
+        result = _convert_webp_to_gif(webp_path)
+        assert result == webp_path
+
+
+# ============================================================
+# Tests: TG source with WebP-to-GIF conversion
+# ============================================================
+
+class TestGetAnimatedEmojiWebpConversion:
+    @pytest.mark.asyncio
+    async def test_tg_webp_converted_to_gif(self, plugin, tmp_path):
+        from PIL import Image
+        frames = [Image.new("RGBA", (64, 64), (0, 255, 0, 200)) for _ in range(2)]
+        webp_path = str(tmp_path / "emoji.webp")
+        frames[0].save(webp_path, save_all=True, append_images=frames[1:],
+                       duration=50, loop=0)
+
+        plugin._get_telegram_url = AsyncMock(
+            return_value="https://example.com/emoji.webp"
+        )
+        plugin._download_image = AsyncMock(return_value=webp_path)
+        local_path, err = await plugin._get_animated_emoji("😀", "tg")
+        assert err is None
+        assert local_path.endswith(".gif")
+        assert os.path.exists(local_path)
+
+    @pytest.mark.asyncio
+    async def test_tg_non_webp_not_converted(self, plugin):
+        plugin._get_telegram_url = AsyncMock(
+            return_value="https://example.com/emoji.gif"
+        )
+        plugin._download_image = AsyncMock(return_value="/tmp/emoji.gif")
+        local_path, err = await plugin._get_animated_emoji("😀", "tg")
+        assert err is None
+        assert local_path == "/tmp/emoji.gif"
+
+
+# ============================================================
+# Tests: Command parsing robustness (extra leading tokens)
+# ============================================================
+
+class TestCommandParsingRobustness:
+    @pytest.mark.asyncio
+    async def test_parse_tg_source_normal(self, plugin):
+        """Normal 'tg 🐜' parsing works."""
+        plugin._get_animated_emoji = AsyncMock(
+            return_value=("/tmp/emoji.gif", None)
+        )
+        mock_event = MagicMock()
+        mock_event.message_str = "tg 🐜"
+        mock_event.plain_result = lambda t: t
+        mock_event.chain_result = lambda c: c
+
+        results = []
+        async for r in plugin.animoji(mock_event):
+            results.append(r)
+
+        assert len(results) == 1
+        plugin._get_animated_emoji.assert_called_once_with("🐜", "tg")
+
+    @pytest.mark.asyncio
+    async def test_parse_tg_source_with_at_botname(self, plugin):
+        """'@BotName tg 🐜' should still detect tg source."""
+        plugin._get_animated_emoji = AsyncMock(
+            return_value=("/tmp/emoji.gif", None)
+        )
+        mock_event = MagicMock()
+        mock_event.message_str = "@BotName tg 🐜"
+        mock_event.plain_result = lambda t: t
+        mock_event.chain_result = lambda c: c
+
+        results = []
+        async for r in plugin.animoji(mock_event):
+            results.append(r)
+
+        assert len(results) == 1
+        plugin._get_animated_emoji.assert_called_once_with("🐜", "tg")
+
+    @pytest.mark.asyncio
+    async def test_parse_noto_source_with_extra_prefix(self, plugin):
+        """'prefix noto 😀' should detect noto source."""
+        plugin._get_animated_emoji = AsyncMock(
+            return_value=("/tmp/emoji.gif", None)
+        )
+        mock_event = MagicMock()
+        mock_event.message_str = "something noto 😀"
+        mock_event.plain_result = lambda t: t
+        mock_event.chain_result = lambda c: c
+
+        results = []
+        async for r in plugin.animoji(mock_event):
+            results.append(r)
+
+        assert len(results) == 1
+        plugin._get_animated_emoji.assert_called_once_with("😀", "noto")
+
+    @pytest.mark.asyncio
+    async def test_parse_emoji_only_defaults_noto(self, plugin):
+        """'😀' should default to noto."""
+        plugin._get_animated_emoji = AsyncMock(
+            return_value=("/tmp/emoji.gif", None)
+        )
+        mock_event = MagicMock()
+        mock_event.message_str = "😀"
+        mock_event.plain_result = lambda t: t
+        mock_event.chain_result = lambda c: c
+
+        results = []
+        async for r in plugin.animoji(mock_event):
+            results.append(r)
+
+        assert len(results) == 1
+        plugin._get_animated_emoji.assert_called_once_with("😀", "noto")

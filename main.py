@@ -6,6 +6,7 @@ from urllib.parse import urlparse, quote
 
 import aiohttp
 import emoji as emoji_lib
+from PIL import Image
 
 from astrbot.api.event import filter, AstrMessageEvent
 from astrbot.api.star import Context, Star, StarTools, register
@@ -116,6 +117,26 @@ def _build_mirror_urls(url: str) -> list[str]:
         ])
 
     return urls
+
+
+def _convert_webp_to_gif(webp_path: str) -> str:
+    """Convert an animated WebP file to GIF for cross-platform compatibility.
+
+    Returns the path to the GIF file. If the GIF already exists, returns it
+    directly. Falls back to the original WebP path on conversion failure.
+    """
+    gif_path = os.path.splitext(webp_path)[0] + ".gif"
+    if os.path.exists(gif_path):
+        return gif_path
+
+    try:
+        img = Image.open(webp_path)
+        img.save(gif_path, save_all=True, loop=0)
+        logger.info("AnimatedEmoji: converted WebP to GIF: %s", gif_path)
+        return gif_path
+    except Exception as e:
+        logger.warning("AnimatedEmoji: WebP to GIF conversion failed: %s", e)
+        return webp_path
 
 
 @register(
@@ -270,6 +291,9 @@ class AnimatedEmojiPlugin(Star):
             local_path = await self._download_image(url)
             if not local_path:
                 return None, f"Telegram 动态 emoji 下载失败: {emoji_char}"
+            # Convert animated WebP to GIF for cross-platform compatibility
+            if local_path.endswith(".webp"):
+                local_path = _convert_webp_to_gif(local_path)
             return local_path, None
 
         return None, f"未知来源: {source}"
@@ -291,10 +315,14 @@ class AnimatedEmojiPlugin(Star):
 
         # Parse source type
         source = "noto"
-        parts = text.split(maxsplit=1)
+        parts = text.split(maxsplit=2)
         if parts[0].lower() in ("noto", "tg"):
             source = parts[0].lower()
             text = parts[1] if len(parts) > 1 else ""
+        elif len(parts) >= 2 and parts[1].lower() in ("noto", "tg"):
+            # Handle extra leading token (e.g. @botname on Telegram)
+            source = parts[1].lower()
+            text = parts[2] if len(parts) > 2 else ""
         emoji_char = _extract_emoji(text)
         if not emoji_char:
             yield event.plain_result("未检测到有效的 emoji，请输入一个 emoji 表情。")
