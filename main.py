@@ -6,6 +6,7 @@ from urllib.parse import urlparse, quote
 
 import aiohttp
 import emoji as emoji_lib
+from PIL import Image
 
 from astrbot.api.event import filter, AstrMessageEvent
 from astrbot.api.star import Context, Star, StarTools, register
@@ -116,6 +117,54 @@ def _build_mirror_urls(url: str) -> list[str]:
         ])
 
     return urls
+
+
+def _convert_webp_to_gif(webp_path: str) -> str | None:
+    """Convert an animated WebP file to GIF. Returns the GIF path or None on failure."""
+    gif_path = os.path.splitext(webp_path)[0] + ".gif"
+    if os.path.exists(gif_path):
+        return gif_path
+
+    try:
+        img = Image.open(webp_path)
+        if not getattr(img, "is_animated", False):
+            # Static WebP: simple conversion
+            img.save(gif_path, format="GIF")
+            return gif_path
+
+        frames = []
+        durations = []
+        try:
+            while True:
+                frame = img.copy().convert("RGBA")
+                frames.append(frame)
+                durations.append(img.info.get("duration", 100))
+                img.seek(img.tell() + 1)
+        except EOFError:
+            pass
+
+        if not frames:
+            return None
+
+        gif_frames = [f.convert("P", palette=Image.ADAPTIVE, colors=256) for f in frames]
+        gif_frames[0].save(
+            gif_path,
+            format="GIF",
+            save_all=True,
+            append_images=gif_frames[1:],
+            duration=durations,
+            loop=0,
+            disposal=2,
+        )
+        return gif_path
+    except Exception as e:
+        logger.warning("AnimatedEmoji: webp to gif conversion failed: %s", e)
+        if os.path.exists(gif_path):
+            try:
+                os.remove(gif_path)
+            except OSError:
+                pass
+        return None
 
 
 @register(
@@ -270,6 +319,11 @@ class AnimatedEmojiPlugin(Star):
             local_path = await self._download_image(url)
             if not local_path:
                 return None, f"Telegram 动态 emoji 下载失败: {emoji_char}"
+            # Convert animated WebP to GIF for cross-platform compatibility
+            if local_path.lower().endswith(".webp"):
+                gif_path = _convert_webp_to_gif(local_path)
+                if gif_path:
+                    local_path = gif_path
             return local_path, None
 
         return None, f"未知来源: {source}"
@@ -295,6 +349,16 @@ class AnimatedEmojiPlugin(Star):
         if parts[0].lower() in ("noto", "tg"):
             source = parts[0].lower()
             text = parts[1] if len(parts) > 1 else ""
+        else:
+            # Handle prefix directly followed by emoji without space (e.g. "tg🐜")
+            lower = parts[0].lower()
+            for prefix in ("noto", "tg"):
+                if lower.startswith(prefix) and len(parts[0]) > len(prefix):
+                    rest = parts[0][len(prefix):]
+                    if _extract_emoji(rest) is not None:
+                        source = prefix
+                        text = rest + (" " + parts[1] if len(parts) > 1 else "")
+                        break
         emoji_char = _extract_emoji(text)
         if not emoji_char:
             yield event.plain_result("未检测到有效的 emoji，请输入一个 emoji 表情。")
