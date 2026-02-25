@@ -648,6 +648,135 @@ class TestCommandParsing:
 
 
 # ============================================================
+# Tests: Command parsing with command name in message_str
+# (AstrBot framework keeps command name in event.message_str)
+# ============================================================
+
+class TestCommandParsingWithPrefix:
+    @pytest.mark.asyncio
+    async def test_amj_tg_emoji_with_space(self, plugin):
+        """Test message_str='amj tg ☺️' routes to tg source."""
+        plugin._get_animated_emoji = AsyncMock(
+            return_value=("/tmp/emoji.gif", None)
+        )
+        mock_event = MagicMock()
+        mock_event.message_str = "amj tg ☺️"
+        mock_event.plain_result = lambda t: t
+        mock_event.chain_result = lambda c: c
+
+        results = []
+        async for r in plugin.animoji(mock_event):
+            results.append(r)
+
+        assert len(results) == 1
+        plugin._get_animated_emoji.assert_called_once_with("☺️", "tg")
+
+    @pytest.mark.asyncio
+    async def test_amj_tg_ant_emoji(self, plugin):
+        """Test message_str='amj tg 🐜' routes to tg source."""
+        plugin._get_animated_emoji = AsyncMock(
+            return_value=("/tmp/emoji.gif", None)
+        )
+        mock_event = MagicMock()
+        mock_event.message_str = "amj tg 🐜"
+        mock_event.plain_result = lambda t: t
+        mock_event.chain_result = lambda c: c
+
+        results = []
+        async for r in plugin.animoji(mock_event):
+            results.append(r)
+
+        assert len(results) == 1
+        plugin._get_animated_emoji.assert_called_once_with("🐜", "tg")
+
+    @pytest.mark.asyncio
+    async def test_amj_noto_emoji(self, plugin):
+        """Test message_str='amj noto 😀' routes to noto source."""
+        plugin._get_animated_emoji = AsyncMock(
+            return_value=("/tmp/emoji.gif", None)
+        )
+        mock_event = MagicMock()
+        mock_event.message_str = "amj noto 😀"
+        mock_event.plain_result = lambda t: t
+        mock_event.chain_result = lambda c: c
+
+        results = []
+        async for r in plugin.animoji(mock_event):
+            results.append(r)
+
+        assert len(results) == 1
+        plugin._get_animated_emoji.assert_called_once_with("😀", "noto")
+
+    @pytest.mark.asyncio
+    async def test_amj_emoji_defaults_noto(self, plugin):
+        """Test message_str='amj 😀' defaults to noto source."""
+        plugin._get_animated_emoji = AsyncMock(
+            return_value=("/tmp/emoji.gif", None)
+        )
+        mock_event = MagicMock()
+        mock_event.message_str = "amj 😀"
+        mock_event.plain_result = lambda t: t
+        mock_event.chain_result = lambda c: c
+
+        results = []
+        async for r in plugin.animoji(mock_event):
+            results.append(r)
+
+        assert len(results) == 1
+        plugin._get_animated_emoji.assert_called_once_with("😀", "noto")
+
+    @pytest.mark.asyncio
+    async def test_animoji_tg_emoji(self, plugin):
+        """Test message_str='animoji tg 😀' routes to tg source (alias)."""
+        plugin._get_animated_emoji = AsyncMock(
+            return_value=("/tmp/emoji.gif", None)
+        )
+        mock_event = MagicMock()
+        mock_event.message_str = "animoji tg 😀"
+        mock_event.plain_result = lambda t: t
+        mock_event.chain_result = lambda c: c
+
+        results = []
+        async for r in plugin.animoji(mock_event):
+            results.append(r)
+
+        assert len(results) == 1
+        plugin._get_animated_emoji.assert_called_once_with("😀", "tg")
+
+    @pytest.mark.asyncio
+    async def test_amj_empty_shows_usage(self, plugin):
+        """Test message_str='amj' shows usage."""
+        mock_event = MagicMock()
+        mock_event.message_str = "amj"
+        mock_event.plain_result = lambda t: t
+
+        results = []
+        async for r in plugin.animoji(mock_event):
+            results.append(r)
+
+        assert len(results) == 1
+        assert "用法" in results[0]
+
+    @pytest.mark.asyncio
+    async def test_amj_tg_no_space_emoji(self, plugin):
+        """Test message_str='amj tg🐜' (no space between tg and emoji)."""
+        plugin._get_animated_emoji = AsyncMock(
+            return_value=("/tmp/emoji.gif", None)
+        )
+        mock_event = MagicMock()
+        mock_event.message_str = "amj tg🐜"
+        mock_event.plain_result = lambda t: t
+        mock_event.chain_result = lambda c: c
+
+        results = []
+        async for r in plugin.animoji(mock_event):
+            results.append(r)
+
+        assert len(results) == 1
+        plugin._get_animated_emoji.assert_called_once_with("🐜", "tg")
+
+
+# ============================================================
 # Tests: TG source converts WebP to GIF
 # ============================================================
 
