@@ -333,6 +333,11 @@ class AnimatedEmojiPlugin(Star):
         """将 emoji 转换为动态版本。用法: /amj [noto|tg] <emoji>"""
         text = event.message_str.strip()
 
+        # Strip command trigger (AstrBot keeps command name in message_str)
+        _parts = text.split(maxsplit=1)
+        if _parts and _parts[0].lower() in ("amj", "animoji"):
+            text = _parts[1] if len(_parts) > 1 else ""
+
         if not text:
             yield event.plain_result(
                 "用法: /amj [noto|tg] <emoji>\n"
